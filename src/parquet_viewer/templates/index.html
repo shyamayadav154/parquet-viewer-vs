@@ -255,6 +255,93 @@
   return `<div class='overflow-x-auto overflow-y-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 shadow-sm max-h-[300px] w-full'><table class='text-[11px] md:text-sm text-left align-top w-max min-w-full'>${headHtml}<tbody class='divide-y divide-slate-100 dark:divide-slate-800 bg-white/60 dark:bg-slate-900/40'>${body}</tbody></table></div>`;
     }
 
+    // --- Virtualization support ---
+    // Store per-viewer state (selection + virtualization meta)
+    const dataViewers = {}; // prefix -> {selected:Set<number>, rows:object[], headers:string[], virtual:boolean, rowHeight:number}
+
+    function renderVirtualizedTable({headers, rowObjects, prefix}){
+      const rowCount = rowObjects.length;
+  const containerHeight = 300; // reduced height per user request
+      const estRowHeight = 28; // px (approx, will refine after first measurement)
+      if(!dataViewers[prefix]) dataViewers[prefix] = {selected:new Set(), rows:rowObjects, headers, virtual:true, rowHeight:estRowHeight};
+      const state = dataViewers[prefix];
+      state.rows = rowObjects; state.headers = headers; state.virtual = true;
+      const master = `<th class='px-2 py-2 font-semibold whitespace-nowrap w-6 sticky left-0 bg-slate-100/70 dark:bg-slate-800/60'><input id='${prefix}RowSelectAll' type='checkbox' class='accent-indigo-600 border border-slate-300 dark:border-slate-600 rounded-sm'/></th>`;
+      const headHtml = `<thead class='bg-slate-100/70 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 sticky top-0'><tr>${master}${headers.map(h=>`<th class='px-3 py-2 font-semibold whitespace-nowrap'>${h}</th>`).join('')}</tr></thead>`;
+    return `<div id='${prefix}VirtualWrap' class='overflow-x-auto overflow-y-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 shadow-sm w-full' style='max-height:${containerHeight}px;'>
+      <table class='text-[11px] md:text-sm text-left align-top w-max min-w-full'>${headHtml}<tbody id='${prefix}VirtualBody' class='bg-white/60 dark:bg-slate-900/40'></tbody></table>
+    </div>`;
+    }
+
+    function updateVirtualRows(prefix){
+      const state = dataViewers[prefix];
+      if(!state || !state.virtual) return;
+      const wrap = document.getElementById(prefix+'VirtualWrap');
+      const body = document.getElementById(prefix+'VirtualBody');
+      if(!wrap || !body) return;
+      const scrollTop = wrap.scrollTop;
+      const h = wrap.clientHeight;
+      const rowH = state.rowHeight;
+      const total = state.rows.length;
+      const first = Math.max(0, Math.floor(scrollTop / rowH) - 5);
+      const per = Math.ceil(h / rowH) + 10; // buffer
+      const last = Math.min(total, first + per);
+      const slice = state.rows.slice(first, last);
+      const topPad = first * rowH;
+      const bottomPad = (total - last) * rowH;
+      const rowsHtml = slice.map((r, idx)=>{
+        const realIndex = first + idx;
+        const cbChecked = state.selected.has(realIndex) ? 'checked' : '';
+        const cells = state.headers.map(h=>{
+          const v = r[h];
+          if(v===null||v===undefined) return '<td class=\'px-3 py-1.5 align-top whitespace-nowrap\'><span class="text-slate-400">null</span></td>';
+          let s = typeof v==='object'? JSON.stringify(v): String(v);
+          if(s.length>120) s = `<span title='${s.replace(/"/g,'&quot;')}'>${s.slice(0,117)}…</span>`;
+          return `<td class='px-3 py-1.5 align-top whitespace-nowrap'>${s}</td>`;
+        }).join('');
+        return `<tr data-r='${realIndex}' class='hover:bg-indigo-50/70 dark:hover:bg-indigo-900/30 transition'>
+          <td class='px-2 py-1.5 align-top sticky left-0 bg-white/80 dark:bg-slate-900/60'><input data-row='${realIndex}' type='checkbox' class='row-select accent-indigo-600 border border-slate-300 dark:border-slate-600 rounded-sm' ${cbChecked}/></td>
+          ${cells}
+        </tr>`;
+      }).join('');
+      body.innerHTML = `<tr style='height:${topPad}px'></tr>${rowsHtml}<tr style='height:${bottomPad}px'></tr>`;
+      // Refine row height using first real visible row
+      const firstReal = body.querySelector('tr:nth-child(2)');
+      if(firstReal){
+        const measured = firstReal.getBoundingClientRect().height;
+        if(measured && Math.abs(measured - state.rowHeight) > 2){
+          state.rowHeight = measured;
+          // Re-run to adjust paddings with new height
+          updateVirtualRows(prefix);
+          return;
+        }
+      }
+      // Event binding for selection in virtual rows
+      body.querySelectorAll('.row-select').forEach(cb=>{
+        cb.addEventListener('change', (e)=>{
+          const idx = parseInt(e.target.dataset.row,10);
+          if(e.target.checked){ state.selected.add(idx);} else { state.selected.delete(idx);}          
+          syncMasterCheckbox(prefix);
+          updateSelectedCount(prefix);
+          updateDataViewerSQL({headers: state.headers, rowObjects: state.rows, prefix});
+        });
+      });
+    }
+
+    function syncMasterCheckbox(prefix){
+      const state = dataViewers[prefix]; if(!state) return;
+      const master = document.getElementById(prefix+'RowSelectAll');
+      if(!master) return;
+      master.checked = state.selected.size && state.selected.size === state.rows.length;
+      master.indeterminate = state.selected.size>0 && state.selected.size < state.rows.length;
+    }
+
+    function updateSelectedCount(prefix){
+      const state = dataViewers[prefix]; if(!state) return;
+      const box = document.getElementById(prefix+'selectedCount');
+      if(box) box.value = `${state.selected.size}/${state.rows.length}`;
+    }
+
     let fullData = null;
     let selectedCols = null; // null => all
   let activeFilters = []; // array of {id,col,op,value}
@@ -597,7 +684,11 @@
         const s = typeof v==='object'? JSON.stringify(v): String(v);
         return s.length>120? `<span title='${s.replace(/"/g,"&quot;") }'>${s.slice(0,117)}…</span>`: s;
       }));
-      const tableHtml = renderTable(headers, tableRows, {selectable:true, prefix});
+      const useVirtual = rowObjects.length > 1000; // threshold
+      if(!dataViewers[prefix]) dataViewers[prefix] = {selected:new Set(), rows:rowObjects, headers, virtual:useVirtual, rowHeight:28};
+      const state = dataViewers[prefix];
+      state.virtual = useVirtual; state.rows = rowObjects; state.headers = headers;
+      const tableHtml = useVirtual ? renderVirtualizedTable({headers, rowObjects, prefix}) : renderTable(headers, tableRows, {selectable:true, prefix});
       container.innerHTML = `
   <h4 class='mb-2 text-xs md:text-sm font-semibold tracking-wide uppercase text-slate-600 dark:text-slate-300'>Data</h4>
         <div class='flex items-center justify-between mb-2 gap-4'>
@@ -611,6 +702,22 @@
         ${dataViewerBuilderSection(prefix)}
       `;
       attachDataViewerHandlers({container, headers, rowObjects, prefix});
+      if(useVirtual){
+        const wrap = document.getElementById(prefix+'VirtualWrap');
+        if(wrap){
+          wrap.addEventListener('scroll', ()=>{ updateVirtualRows(prefix); });
+          updateVirtualRows(prefix); // initial
+          syncMasterCheckbox(prefix); updateSelectedCount(prefix);
+        }
+      } else {
+        // Restore previously selected rows (if any) when switching from virtual to non-virtual
+        if(state.selected.size){
+          state.selected.forEach(idx=>{
+            const cb = container.querySelector(`.row-select[data-row='${idx}']`);
+            if(cb) cb.checked = true;
+          });
+        }
+      }
   // Initialize SQL builder UI state (show/hide messages appropriately)
   updateDataViewerSQL({headers, rowObjects, prefix});
     }
@@ -634,43 +741,56 @@
     }
 
     function attachDataViewerHandlers({container, headers, rowObjects, prefix}){
-      const rowChecks = Array.from(container.querySelectorAll('.row-select'));
+      const state = dataViewers[prefix];
       const master = container.querySelector(`#${prefix}RowSelectAll`);
       const selectAllBtn = container.querySelector(`#${prefix}selectAllRows`);
       const selectedCountBox = container.querySelector(`#${prefix}selectedCount`);
 
       function updateSelectAllButton(){
         if(!selectAllBtn) return;
-        const allSelected = rowChecks.length>0 && rowChecks.every(c=>c.checked);
+        const allSelected = state.selected.size && state.selected.size === rowObjects.length;
         selectAllBtn.textContent = allSelected ? 'Unselect All' : 'Select All';
       }
       function updateSelectedCount(){
         if(!selectedCountBox) return;
-        const total = rowChecks.length;
-        const sel = rowChecks.filter(c=>c.checked).length;
+        const total = rowObjects.length;
+        const sel = state.selected.size;
         selectedCountBox.value = `${sel}/${total}`;
       }
       if(master){
         master.addEventListener('change', ()=>{
-          rowChecks.forEach(c=>{c.checked = master.checked;});
-          updateDataViewerSQL({headers, rowObjects, prefix});
-          updateSelectAllButton();
-          updateSelectedCount();
+          if(master.checked){
+            // Select all
+            state.selected = new Set(Array.from({length: rowObjects.length}, (_,i)=>i));
+          } else {
+            state.selected.clear();
+          }
+          if(state.virtual){ updateVirtualRows(prefix);} else { container.querySelectorAll('.row-select').forEach(c=>c.checked = master.checked); }
+          updateDataViewerSQL({headers, rowObjects, prefix}); updateSelectAllButton(); updateSelectedCount();
         });
       }
-      rowChecks.forEach(cb=>cb.addEventListener('change', ()=>{ updateMaster(master, rowChecks); updateDataViewerSQL({headers, rowObjects, prefix}); updateSelectAllButton(); updateSelectedCount(); }));
       if(selectAllBtn){
         selectAllBtn.addEventListener('click', ()=>{
-          const allSelected = rowChecks.length>0 && rowChecks.every(c=>c.checked);
-          rowChecks.forEach(c=>c.checked = !allSelected);
-          updateMaster(master, rowChecks);
-          updateDataViewerSQL({headers, rowObjects, prefix});
-          updateSelectAllButton();
-          updateSelectedCount();
+          const allSelected = state.selected.size === rowObjects.length;
+          if(allSelected){ state.selected.clear(); }
+          else { state.selected = new Set(Array.from({length: rowObjects.length}, (_,i)=>i)); }
+          if(state.virtual){ updateVirtualRows(prefix);} else { container.querySelectorAll('.row-select').forEach(c=>c.checked = !allSelected); }
+          syncMasterCheckbox(prefix); updateDataViewerSQL({headers, rowObjects, prefix}); updateSelectAllButton(); updateSelectedCount();
         });
       }
-      updateSelectAllButton();
-      updateSelectedCount();
+      // For non-virtual tables attach per-row listeners
+      if(!state.virtual){
+        container.querySelectorAll('.row-select').forEach(cb=>cb.addEventListener('change', (e)=>{
+          const idx = parseInt(e.target.dataset.row,10);
+          if(e.target.checked) state.selected.add(idx); else state.selected.delete(idx);
+          if(master){
+            const allSelected = state.selected.size === rowObjects.length;
+            master.checked = allSelected; master.indeterminate = state.selected.size>0 && !allSelected;
+          }
+          updateDataViewerSQL({headers, rowObjects, prefix}); updateSelectAllButton(); updateSelectedCount();
+        }));
+      }
+      updateSelectAllButton(); updateSelectedCount(); syncMasterCheckbox(prefix);
     container.querySelector(`#${prefix}copySql`)?.addEventListener('click', ()=>{
         const pre = container.querySelector(`#${prefix}sqlPreview`);
         navigator.clipboard.writeText(pre.textContent).then(()=>{
@@ -711,10 +831,8 @@
       const tableNameInput = document.getElementById(`${prefix}sqlTableName`);
   const tableInput = tableNameInput?.value || 'my_table';
   const table = quoteIdent(tableInput);
-      const checks = Array.from(document.querySelectorAll(`#${prefix}sqlBuilder ~ div .row-select`)); // fallback not used; simpler approach below
-      const viewer = document.getElementById(`${prefix}sqlBuilder`)?.parentElement; // container
-      const rowChecks = viewer ? Array.from(viewer.querySelectorAll('.row-select')) : [];
-      const selectedIdx = rowChecks.filter(c=>c.checked).map(c=>parseInt(c.dataset.row));
+  const state = dataViewers[prefix];
+  const selectedIdx = state ? Array.from(state.selected).sort((a,b)=>a-b) : [];
       if(selectedIdx.length===0){
         pre.classList.add('hidden');
         pre.textContent='';
