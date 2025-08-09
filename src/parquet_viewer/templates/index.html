@@ -79,11 +79,7 @@
         </div>
         <div id="resultWrapper" class="hidden space-y-6">
           <div class="flex flex-wrap items-center gap-4">
-            <div class="flex flex-col">
-              <h2 id="fileTitle" class="text-2xl font-semibold tracking-tight"></h2>
-              <p id="fileMeta" class="text-sm text-slate-500 dark:text-slate-400"></p>
-            </div>
-            <div class="relative">
+            <div class="relative flex items-center gap-3">
               <button id="colToggle" class="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs font-medium hover:border-indigo-400 dark:hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition">Columns <span id="colCount" class="text-slate-500 dark:text-slate-400"></span> ▾</button>
               <div id="colMenu" class="hidden absolute z-20 mt-2 w-64 max-h-72 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-3 space-y-2 text-xs">
                 <div class="flex items-center gap-2">
@@ -96,6 +92,24 @@
                   <button id="selectAll" class="text-indigo-600 dark:text-indigo-400 font-medium">All</button>
                   <button id="selectNone" class="text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400">None</button>
                   <button id="applyCols" class="px-2 py-0.5 rounded bg-indigo-600 text-white text-[11px] font-medium">Apply</button>
+                </div>
+              </div>
+              <div class="relative">
+                <button id="filterToggle" class="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs font-medium hover:border-emerald-400 dark:hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition">Filter <span id="filterBadge" class="hidden text-emerald-600 dark:text-emerald-400">0</span> ▾</button>
+                <div id="filterMenu" class="hidden absolute z-20 mt-2 w-[420px] max-h-[480px] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-4 space-y-4 text-xs">
+                  <div class="flex items-center justify-between">
+                    <h4 class="font-semibold text-slate-600 dark:text-slate-300 text-xs tracking-wide">Filters (AND)</h4>
+                    <button id="addFilterCond" class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white text-[11px] font-medium">+ Condition</button>
+                  </div>
+                  <div id="filterConditions" class="space-y-3"></div>
+                  <div class="flex justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div class="flex gap-2">
+                      <button id="applyFilter" class="px-3 py-1.5 rounded-md bg-emerald-600 text-white font-medium text-[11px]">Apply</button>
+                      <button id="clearFilter" class="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 text-[11px]">Clear</button>
+                    </div>
+                    <button id="closeFilter" class="text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 text-[11px]">Close</button>
+                  </div>
+                  <p class="text-[10px] text-slate-500 dark:text-slate-500 leading-relaxed">All conditions are combined with AND. Use contains for substring match. Null operators ignore value.</p>
                 </div>
               </div>
             </div>
@@ -128,8 +142,6 @@
     const dropZone = $('#dropZone');
     const placeholder = $('#placeholder');
     const resultWrapper = $('#resultWrapper');
-    const fileTitle = $('#fileTitle');
-    const fileMeta = $('#fileMeta');
     const panels = $('#tab-panels');
 
     function setLoading(state){
@@ -174,6 +186,7 @@
 
     let fullData = null;
     let selectedCols = null; // null => all
+  let activeFilters = []; // array of {id,col,op,value}
 
     function updateColCount(){
       const total = fullData ? fullData.schema.length : 0;
@@ -201,7 +214,9 @@
         return;
       }
       const sampleHead = selectedCols ? selectedCols : fullData.schema.map(s=>s.name);
-  const sampleRows = fullData.sample.map(r=>sampleHead.map(h=>{
+      const baseRows = fullData.sample;
+  const filteredRows = activeFilters.length ? baseRows.filter(r=>activeFilters.every(f=>passFilter(r,f))) : baseRows;
+      const sampleRows = filteredRows.map(r=>sampleHead.map(h=>{
         const v = r[h];
         if(v === null || v === undefined) return '<span class="text-slate-400">null</span>';
         const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -210,7 +225,8 @@
   $('#panel-sample').innerHTML = renderTable(sampleHead, sampleRows, {selectable:true}) + sqlBuilderSection();
   attachRowSelectHandlers(sampleHead);
       if(fullData.stats){
-        const filteredStats = Object.entries(fullData.stats).filter(([c])=>!selectedCols || selectedCols.includes(c));
+        const columnFilter = !selectedCols ? (c)=>true : (c)=>selectedCols.includes(c);
+        const filteredStats = Object.entries(fullData.stats).filter(([c])=>columnFilter(c));
         const statCards = filteredStats.map(([col, stats])=>{
           return `<div class='p-4 rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 bg-white/60 dark:bg-slate-900/40 flex flex-col gap-2'>
             <h4 class='font-semibold text-sm'>${col}</h4>
@@ -224,12 +240,12 @@
     function renderResult(data){
       placeholder.classList.add('hidden');
       resultWrapper.classList.remove('hidden');
-      fileTitle.textContent = data.filename;
-      fileMeta.textContent = `${fmtNumber(data.num_rows)} rows · ${data.num_columns} columns`;
+  // Filename & stats already shown in the file info card; avoid duplicate heading here.
       fullData = data;
       selectedCols = null; // all
       buildColMenu();
       updateColCount();
+  populateFilterColumns();
       applyColumnSelection();
       activateTab('sample');
       renderFileInfoCard(data);
@@ -272,6 +288,103 @@
   $('#colClear').addEventListener('click', e=>{ e.preventDefault(); $('#colSearch').value=''; buildColMenu(); });
   $('#applyCols').addEventListener('click', e=>{ e.preventDefault(); const checks = $$('#colList input[type=checkbox]'); const all = fullData.schema.map(s=>s.name); const chosen = checks.filter(c=>c.checked).map(c=>c.dataset.col); selectedCols = chosen.length===all.length ? null : chosen; updateColCount(); applyColumnSelection(); colMenu.classList.add('hidden'); });
   $('#colList').addEventListener('change', e=>{ /* live updates optional */ });
+
+    // Filter menu interactions
+    const filterToggle = $('#filterToggle');
+    const filterMenu = $('#filterMenu');
+    const filterBadge = $('#filterBadge');
+    const conditionsEl = $('#filterConditions');
+    filterToggle.addEventListener('click', (e)=>{ e.stopPropagation(); filterMenu.classList.toggle('hidden'); });
+    document.addEventListener('click', (e)=>{ if(!filterMenu.contains(e.target) && e.target!==filterToggle){ filterMenu.classList.add('hidden'); }});
+    $('#closeFilter').addEventListener('click', ()=>filterMenu.classList.add('hidden'));
+    $('#addFilterCond').addEventListener('click', (e)=>{ e.preventDefault(); addFilterCondition(); });
+    $('#applyFilter').addEventListener('click', ()=>{ collectFilters(); updateFilterBadge(); filterMenu.classList.add('hidden'); applyColumnSelection(); });
+    $('#clearFilter').addEventListener('click', ()=>{ activeFilters=[]; conditionsEl.innerHTML=''; updateFilterBadge(); filterMenu.classList.add('hidden'); applyColumnSelection(); });
+
+    function populateFilterColumns(){
+      if(!fullData) return;
+      // Update existing selects
+      $$('#filterConditions select[data-role=col]').forEach(sel=>{
+        const prev = sel.value;
+        sel.innerHTML = fullData.schema.map(s=>`<option value='${s.name}'>${s.name}</option>`).join('');
+        if([...sel.options].some(o=>o.value===prev)) sel.value=prev;
+      });
+    }
+
+    function addFilterCondition(){
+      const id = crypto.randomUUID();
+      const colsOptions = fullData ? fullData.schema.map(s=>`<option value='${s.name}'>${s.name}</option>`).join('') : '';
+      const html = `<div class='cond flex items-end gap-2' data-id='${id}'>
+        <label class='flex flex-col gap-1'>Col
+          <select data-role='col' class='rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 px-2 py-1 text-[11px] min-w-[120px]'>${colsOptions}</select>
+        </label>
+        <label class='flex flex-col gap-1'>Op
+          <select data-role='op' class='op-select rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 px-2 py-1 text-[11px]'>
+            <option value='eq'>=</option>
+            <option value='neq'>!=</option>
+            <option value='gt'>&gt;</option>
+            <option value='gte'>&gt;=</option>
+            <option value='lt'>&lt;</option>
+            <option value='lte'>&lt;=</option>
+            <option value='contains'>contains</option>
+            <option value='null'>is null</option>
+            <option value='notnull'>is not null</option>
+          </select>
+        </label>
+        <label class='flex flex-col gap-1 value-wrap'>Val
+          <input data-role='val' type='text' class='rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 px-2 py-1 text-[11px] min-w-[120px]' />
+        </label>
+        <button data-role='remove' class='h-7 w-7 flex items-center justify-center rounded-md border border-slate-300 dark:border-slate-600 text-slate-500 hover:text-rose-600 hover:border-rose-400 dark:hover:text-rose-400 text-[13px]' title='Remove'>✕</button>
+      </div>`;
+      conditionsEl.insertAdjacentHTML('beforeend', html);
+      const row = conditionsEl.lastElementChild;
+      row.querySelector('[data-role=remove]').addEventListener('click', (e)=>{ e.preventDefault(); row.remove(); collectFilters(); updateFilterBadge(); applyColumnSelection(); });
+      row.querySelector('.op-select').addEventListener('change', (e)=>{ toggleValueInput(row, e.target.value); });
+    }
+
+    function toggleValueInput(row, op){
+      const wrap = row.querySelector('.value-wrap');
+      if(!wrap) return;
+      const hide = op==='null' || op==='notnull';
+      wrap.classList.toggle('invisible', hide);
+      wrap.classList.toggle('opacity-0', hide);
+      if(hide){ row.querySelector('[data-role=val]').value=''; }
+    }
+
+    function collectFilters(){
+      const result = [];
+      $$('#filterConditions .cond').forEach(row=>{
+        const col = row.querySelector('[data-role=col]').value;
+        const op = row.querySelector('[data-role=op]').value;
+        let value = row.querySelector('[data-role=val]').value;
+        if(op==='null' || op==='notnull') value = null;
+        if(!col) return;
+        if((op!=='null' && op!=='notnull') && (value===null || value==='')) return;
+        result.push({col, op, value});
+      });
+      activeFilters = result;
+    }
+
+    function updateFilterBadge(){
+      filterBadge.textContent = activeFilters.length ? activeFilters.length : '0';
+      filterBadge.classList.toggle('hidden', activeFilters.length===0);
+    }
+
+    function passFilter(row, f){
+      const v = row[f.col];
+      switch(f.op){
+        case 'null': return v===null || v===undefined;
+        case 'notnull': return v!==null && v!==undefined;
+        case 'eq': return String(v)===f.value;
+        case 'neq': return String(v)!==f.value;
+        case 'gt': return typeof v==='number' ? v>Number(f.value) : String(v)>f.value;
+        case 'gte': return typeof v==='number' ? v>=Number(f.value) : String(v)>=f.value;
+        case 'lt': return typeof v==='number' ? v<Number(f.value) : String(v)<f.value;
+        case 'lte': return typeof v==='number' ? v<=Number(f.value) : String(v)<=f.value;
+        case 'contains': return v!==null && v!==undefined && String(v).toLowerCase().includes(f.value.toLowerCase());
+        default: return true;
+      }
+    }
     ;['dragenter','dragover'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.add('drop-active');}));
     ;['dragleave','drop'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault(); if(ev==='drop'){ const dt=e.dataTransfer; if(dt?.files?.length){ fileInput.files=dt.files; fileInput.dispatchEvent(new Event('change')); }} dropZone.classList.remove('drop-active');}));
 
