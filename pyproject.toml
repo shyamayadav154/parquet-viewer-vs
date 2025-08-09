@@ -1,0 +1,39 @@
+[project]
+name = "parquet-viewer"
+version = "0.1.0"
+description = "Lightweight web UI to inspect Parquet files (schema + sample rows + stats)."
+authors = [{name = "Your Name"}]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "jinja2",
+  "python-multipart",
+  "pandas",
+  "pyarrow",
+  "orjson",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "httpx",
+  "ruff",
+  "black",
+  "isort",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"

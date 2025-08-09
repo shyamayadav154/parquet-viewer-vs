@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/parquet_viewer/__init__.py
+src/parquet_viewer/main.py
+src/parquet_viewer.egg-info/PKG-INFO
+src/parquet_viewer.egg-info/SOURCES.txt
+src/parquet_viewer.egg-info/dependency_links.txt
+src/parquet_viewer.egg-info/requires.txt
+src/parquet_viewer.egg-info/top_level.txt
+tests/test_basic.py
+tests/test_upload.py

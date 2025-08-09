@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.python-version
+.coverage
+htmlcov/
+.DS_Store
+_uploads/

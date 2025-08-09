@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parquet Viewer</title>
+  <meta name="color-scheme" content="light dark" />
+  <script>
+    // Theme init before paint
+    const storedTheme = localStorage.getItem('theme');
+    if(storedTheme==='dark' || (!storedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)){
+      document.documentElement.classList.add('dark');
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' };
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; }
+  .drop-active { border-color: rgb(99 102 241); background: rgba(238,242,255,0.6); }
+  </style>
+</head>
+<body class="h-full bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 text-slate-800 dark:text-slate-100 selection:bg-indigo-500/60 selection:text-white">
+  <header class="backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-slate-900/70 bg-white/90 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40">
+    <div class="max-w-[1500px] mx-auto flex items-center justify-between px-6 h-14">
+      <div class="flex items-center gap-2 font-semibold tracking-tight text-lg">
+        <span class="inline-flex h-8 w-8 rounded-lg bg-indigo-600 text-white items-center justify-center shadow">P</span>
+        <span>Parquet Viewer</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="themeToggle" class="rounded-md px-3 py-1.5 text-sm font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+          <span class="light-label">Dark</span><span class="dark-label hidden">Light</span>
+        </button>
+        <a href="https://github.com/" target="_blank" class="text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-sm">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1500px] mx-auto px-6 py-8 space-y-10">
+    <section class="space-y-4" id="uploadArea">
+      <div id="uploaderCard" class="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 shadow-sm">
+        <form id="uploadForm" class="space-y-4">
+          <div class="flex flex-wrap gap-6 items-end">
+            <div class="grow min-w-[260px]">
+              <label class="block text-xs font-semibold uppercase tracking-wide mb-2 text-slate-600 dark:text-slate-400">Parquet File</label>
+              <div id="dropZone" class="relative flex flex-col md:flex-row md:items-center gap-3 p-4 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl text-center md:text-left hover:border-indigo-400 dark:hover:border-indigo-500 transition cursor-pointer bg-slate-50/60 dark:bg-slate-800/40">
+                <input id="file" name="file" type="file" accept=".parquet" class="absolute inset-0 opacity-0 cursor-pointer" required />
+                <div class="text-3xl md:text-4xl">📄</div>
+                <div class="flex flex-col items-center md:items-start">
+                  <p class="text-sm font-medium">Drag & drop or click to browse</p>
+                  <p class="text-xs text-slate-500 dark:text-slate-400">Parquet (.parquet)</p>
+                  <p id="fileName" class="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hidden"></p>
+                </div>
+              </div>
+            </div>
+            <div class="flex gap-6 flex-wrap">
+              <label class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <input type="checkbox" name="include_stats" checked class="accent-indigo-600" /> Stats
+              </label>
+            </div>
+            <div class="hidden" id="uploadBtnWrap">
+              <button id="uploadBtn" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-400 dark:disabled:bg-slate-700 text-white text-sm font-medium px-4 py-2 shadow transition">
+                <span class="btn-text">Upload & Inspect</span>
+                <span class="loading hidden animate-spin h-4 w-4 border-2 border-white/40 border-t-white rounded-full"></span>
+              </button>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 dark:text-slate-500">File uploads automatically when selected.</p>
+        </form>
+      </div>
+    </section>
+    <section class="space-y-6" id="resultsSection">
+        <div id="placeholder" class="h-64 flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/40 dark:bg-slate-900/40 text-slate-500 dark:text-slate-500">
+          <div class="text-5xl">🧪</div>
+          <p class="font-medium">Upload a Parquet file to inspect its schema & data.</p>
+        </div>
+        <div id="resultWrapper" class="hidden space-y-6">
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="flex flex-col">
+              <h2 id="fileTitle" class="text-2xl font-semibold tracking-tight"></h2>
+              <p id="fileMeta" class="text-sm text-slate-500 dark:text-slate-400"></p>
+            </div>
+            <div class="relative">
+              <button id="colToggle" class="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs font-medium hover:border-indigo-400 dark:hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition">Columns <span id="colCount" class="text-slate-500 dark:text-slate-400"></span> ▾</button>
+              <div id="colMenu" class="hidden absolute z-20 mt-2 w-64 max-h-72 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-3 space-y-2 text-xs">
+                <div class="flex items-center gap-2">
+                  <input id="colSearch" type="text" placeholder="Search" class="w-full rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 px-2 py-1" />
+                  <button id="colClear" class="text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400" title="Clear selection">✕</button>
+                </div>
+                <div class="flex items-center gap-2 text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-500 pt-1 pb-1 border-b border-slate-100 dark:border-slate-800">Select</div>
+                <div id="colList" class="space-y-1"></div>
+                <div class="flex justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                  <button id="selectAll" class="text-indigo-600 dark:text-indigo-400 font-medium">All</button>
+                  <button id="selectNone" class="text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400">None</button>
+                  <button id="applyCols" class="px-2 py-0.5 rounded bg-indigo-600 text-white text-[11px] font-medium">Apply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="border-b border-slate-200 dark:border-slate-800 flex gap-6 mt-4" role="tablist">
+            <button data-tab="sample" class="tab-btn active relative py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400">Sample</button>
+            <button data-tab="stats" class="tab-btn relative py-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400">Stats</button>
+          </div>
+          <div id="tab-panels" class="mt-2">
+            <div id="panel-sample" class="tab-panel"></div>
+            <div id="panel-stats" class="tab-panel hidden"></div>
+          </div>
+        </div>
+  </section>
+  </main>
+
+  <footer class="mt-16 py-8 text-center text-xs text-slate-500 dark:text-slate-600">
+    <p>Built with FastAPI + Tailwind. <span class="font-medium">Drop another file anytime.</span></p>
+  </footer>
+
+  <script>
+    const $ = (q,ctx=document)=>ctx.querySelector(q);
+    const $$ = (q,ctx=document)=>Array.from(ctx.querySelectorAll(q));
+  const form = $('#uploadForm');
+    const fileInput = $('#file');
+    const fileNameEl = $('#fileName');
+  const uploadBtn = $('#uploadBtn');
+  const btnText = uploadBtn ? uploadBtn.querySelector('.btn-text') : null;
+  const loading = uploadBtn ? uploadBtn.querySelector('.loading') : {classList:{toggle:()=>{}}};
+    const dropZone = $('#dropZone');
+    const placeholder = $('#placeholder');
+    const resultWrapper = $('#resultWrapper');
+    const fileTitle = $('#fileTitle');
+    const fileMeta = $('#fileMeta');
+    const panels = $('#tab-panels');
+
+    function setLoading(state){
+      if(uploadBtn){ uploadBtn.disabled = state; }
+      loading.classList.toggle('hidden', !state);
+      if(btnText) btnText.textContent = state ? 'Processing...' : 'Upload & Inspect';
+      if(state){ dropZone.classList.add('opacity-60','pointer-events-none'); } else { dropZone.classList.remove('opacity-60','pointer-events-none'); }
+    }
+
+  function activateTab(name){
+      $$('.tab-btn').forEach(b=>{
+        const active = b.dataset.tab===name;
+        b.classList.toggle('active', active);
+        b.classList.toggle('text-indigo-600', active);
+        b.classList.toggle('dark:text-indigo-400', active);
+        b.classList.toggle('text-slate-500', !active);
+        b.classList.toggle('dark:text-slate-400', !active);
+      });
+      $$('.tab-panel').forEach(p=>p.classList.add('hidden'));
+      $('#panel-'+name).classList.remove('hidden');
+    }
+
+    panels.addEventListener('click', e=>{}); // placeholder to avoid unused warnings
+    document.addEventListener('click', e=>{
+      const btn = e.target.closest('.tab-btn');
+      if(!btn) return; activateTab(btn.dataset.tab);
+    });
+
+    function fmtNumber(n){
+      return Intl.NumberFormat().format(n);
+    }
+
+    function renderTable(headers, rows, {selectable=false}={}){
+      const master = selectable ? `<th class='px-2 py-2 font-semibold whitespace-nowrap w-6'><input id='rowSelectAll' type='checkbox' class='accent-indigo-600'/></th>` : '';
+      const headHtml = headers ? `<thead class='bg-slate-100/70 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 sticky top-0'><tr>${master}${headers.map(h=>`<th class='px-3 py-2 font-semibold whitespace-nowrap'>${h}</th>`).join('')}</tr></thead>` : '';
+      const body = rows.map((r,i)=>{
+        const cb = selectable ? `<td class='px-2 py-1.5 align-top'><input data-row='${i}' type='checkbox' class='row-select accent-indigo-600'/></td>` : '';
+        return `<tr class='hover:bg-indigo-50/70 dark:hover:bg-indigo-900/30 transition'>${cb}${r.map(c=>`<td class='px-3 py-1.5 align-top break-all'>${c}</td>`).join('')}</tr>`;
+      }).join('');
+      return `<div class='overflow-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 shadow-sm max-h-[560px] w-full'><table class='w-full text-[11px] md:text-sm text-left align-top'>${headHtml}<tbody class='divide-y divide-slate-100 dark:divide-slate-800 bg-white/60 dark:bg-slate-900/40'>${body}</tbody></table></div>`;
+    }
+
+    let fullData = null;
+    let selectedCols = null; // null => all
+
+    function updateColCount(){
+      const total = fullData ? fullData.schema.length : 0;
+      const sel = selectedCols ? selectedCols.length : total;
+      $('#colCount').textContent = `(${sel}/${total})`;
+    }
+
+    function buildColMenu(){
+      if(!fullData) return;
+      const list = $('#colList');
+      const searchVal = $('#colSearch').value.toLowerCase();
+      const cols = fullData.schema.map(s=>s.name).filter(n=>n.toLowerCase().includes(searchVal));
+      list.innerHTML = cols.map(c=>{
+        const checked = !selectedCols || selectedCols.includes(c);
+        return `<label class='flex items-center gap-2 text-[11px] cursor-pointer'><input type='checkbox' data-col='${c}' ${checked?'checked':''} class='accent-indigo-600'/> <span class='truncate'>${c}</span></label>`;
+      }).join('');
+    }
+
+    function applyColumnSelection(){
+      if(!fullData) return;
+      // null means "all columns"; empty array means none
+      if(Array.isArray(selectedCols) && selectedCols.length===0){
+        $('#panel-sample').innerHTML = `<p class='text-sm text-slate-500 dark:text-slate-400'>No columns selected.</p>`;
+        $('#panel-stats').innerHTML = `<p class='text-sm text-slate-500 dark:text-slate-400'>No columns selected.</p>`;
+        return;
+      }
+      const sampleHead = selectedCols ? selectedCols : fullData.schema.map(s=>s.name);
+  const sampleRows = fullData.sample.map(r=>sampleHead.map(h=>{
+        const v = r[h];
+        if(v === null || v === undefined) return '<span class="text-slate-400">null</span>';
+        const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return s.length>120 ? `<span title='${s.replace(/"/g,'&quot;')}'>${s.slice(0,117)}…</span>` : s;
+      }));
+  $('#panel-sample').innerHTML = renderTable(sampleHead, sampleRows, {selectable:true}) + sqlBuilderSection();
+  attachRowSelectHandlers(sampleHead);
+      if(fullData.stats){
+        const filteredStats = Object.entries(fullData.stats).filter(([c])=>!selectedCols || selectedCols.includes(c));
+        const statCards = filteredStats.map(([col, stats])=>{
+          return `<div class='p-4 rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 bg-white/60 dark:bg-slate-900/40 flex flex-col gap-2'>
+            <h4 class='font-semibold text-sm'>${col}</h4>
+            <div class='grid grid-cols-2 gap-2 text-[11px] md:text-xs'>${Object.entries(stats).map(([k,v])=>`<div class='flex flex-col'><span class='uppercase tracking-wide text-slate-500 dark:text-slate-500'>${k}</span><span class='font-medium text-slate-700 dark:text-slate-200'>${v===null||v===undefined?'<span class=\'text-slate-400\'>–</span>':v}</span></div>`).join('')}</div>
+          </div>`;
+        }).join('');
+        $('#panel-stats').innerHTML = statCards || `<p class='text-sm text-slate-500 dark:text-slate-400'>No stats for selected columns.</p>`;
+      }
+    }
+
+    function renderResult(data){
+      placeholder.classList.add('hidden');
+      resultWrapper.classList.remove('hidden');
+      fileTitle.textContent = data.filename;
+      fileMeta.textContent = `${fmtNumber(data.num_rows)} rows · ${data.num_columns} columns`;
+      fullData = data;
+      selectedCols = null; // all
+      buildColMenu();
+      updateColCount();
+      applyColumnSelection();
+      activateTab('sample');
+      renderFileInfoCard(data);
+    }
+
+  async function handleUpload(){
+      const data = new FormData(form);
+      setLoading(true);
+      try {
+        const res = await fetch('/api/upload', { method:'POST', body: data });
+        if(!res.ok){
+          const t = await res.text();
+          throw new Error(t);
+        }
+        const json = await res.json();
+        renderResult(json);
+      } catch(err){
+        alert('Upload failed: '+err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    form.addEventListener('submit', e=>{ e.preventDefault(); });
+    fileInput.addEventListener('change', ()=>{
+      if(fileInput.files[0]){
+        fileNameEl.textContent = fileInput.files[0].name + ' (' + Intl.NumberFormat().format(fileInput.files[0].size) + ' bytes)';
+        fileNameEl.classList.remove('hidden');
+        handleUpload(); // auto upload
+      }
+    });
+  // Column menu interactions
+  const colToggle = $('#colToggle');
+  const colMenu = $('#colMenu');
+  colToggle.addEventListener('click', (e)=>{ e.stopPropagation(); colMenu.classList.toggle('hidden'); buildColMenu(); });
+  document.addEventListener('click', (e)=>{ if(!colMenu.contains(e.target) && e.target!==colToggle){ colMenu.classList.add('hidden'); }});
+  $('#colSearch').addEventListener('input', buildColMenu);
+  $('#selectAll').addEventListener('click', e=>{ e.preventDefault(); selectedCols=null; buildColMenu(); updateColCount(); });
+  $('#selectNone').addEventListener('click', e=>{ e.preventDefault(); selectedCols=[]; buildColMenu(); updateColCount(); applyColumnSelection(); });
+  $('#colClear').addEventListener('click', e=>{ e.preventDefault(); $('#colSearch').value=''; buildColMenu(); });
+  $('#applyCols').addEventListener('click', e=>{ e.preventDefault(); const checks = $$('#colList input[type=checkbox]'); const all = fullData.schema.map(s=>s.name); const chosen = checks.filter(c=>c.checked).map(c=>c.dataset.col); selectedCols = chosen.length===all.length ? null : chosen; updateColCount(); applyColumnSelection(); colMenu.classList.add('hidden'); });
+  $('#colList').addEventListener('change', e=>{ /* live updates optional */ });
+    ;['dragenter','dragover'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.add('drop-active');}));
+    ;['dragleave','drop'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault(); if(ev==='drop'){ const dt=e.dataTransfer; if(dt?.files?.length){ fileInput.files=dt.files; fileInput.dispatchEvent(new Event('change')); }} dropZone.classList.remove('drop-active');}));
+
+    // Theme toggle
+    const themeBtn = $('#themeToggle');
+    function updateThemeBtn(){
+      const dark = document.documentElement.classList.contains('dark');
+      themeBtn.querySelector('.light-label').classList.toggle('hidden', dark);
+      themeBtn.querySelector('.dark-label').classList.toggle('hidden', !dark);
+    }
+    themeBtn.addEventListener('click', ()=>{
+      const el = document.documentElement;
+      const dark = el.classList.toggle('dark');
+      localStorage.setItem('theme', dark ? 'dark':'light');
+      updateThemeBtn();
+    });
+    updateThemeBtn();
+
+    // File info card & reset
+    function renderFileInfoCard(data){
+      const card = document.getElementById('uploaderCard');
+      const sizeText = fileInput.files[0] ? ` · ${Intl.NumberFormat().format(fileInput.files[0].size)} bytes` : '';
+      card.innerHTML = `<div class='flex flex-col md:flex-row md:items-center justify-between gap-4'>
+        <div class='flex items-center gap-4'>
+          <div class='h-12 w-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xl font-semibold shadow'>P</div>
+          <div class='flex flex-col'>
+            <h3 class='font-semibold text-sm md:text-base'>${data.filename}</h3>
+            <p class='text-xs text-slate-500 dark:text-slate-400'>${fmtNumber(data.num_rows)} rows · ${data.num_columns} cols${sizeText}</p>
+          </div>
+        </div>
+        <div class='flex items-center gap-3'>
+          <button id='removeFile' class='text-xs font-medium px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition'>Remove File</button>
+        </div>
+      </div>`;
+      document.getElementById('removeFile').addEventListener('click', ()=>resetUpload());
+    }
+
+    function resetUpload(){
+      fullData = null;
+      selectedCols = null;
+      resultWrapper.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      const card = document.getElementById('uploaderCard');
+      card.innerHTML = '';
+      // Re-render original uploader by reloading page (simplest) or reconstruct markup:
+      location.reload();
+    }
+
+    // SQL builder helpers
+    function sqlBuilderSection(){
+      return `<div id='sqlBuilder' class='mt-6 space-y-3'>
+        <div class='flex flex-wrap items-center gap-3'>
+          <label class='text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 flex items-center gap-2'>Table
+            <input id='sqlTableName' type='text' value='my_table' class='rounded-md border-slate-300 dark:border-slate-700 dark:bg-slate-800/60 text-xs px-2 py-1'/>
+          </label>
+          <label class='flex items-center gap-1 text-[11px] font-medium text-slate-600 dark:text-slate-400'>
+            <input id='perRowMode' type='checkbox' class='accent-indigo-600'> Per-row
+          </label>
+          <button id='copySql' class='text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium disabled:bg-slate-400 dark:disabled:bg-slate-700'>Copy SQL</button>
+          <span id='sqlStatus' class='text-xs text-slate-500 dark:text-slate-500'></span>
+        </div>
+        <pre id='sqlPreview' class='text-[10px] md:text-xs leading-relaxed bg-slate-900/80 text-slate-100 p-3 rounded-lg overflow-auto max-h-64 hidden'></pre>
+      </div>`;
+    }
+
+    function attachRowSelectHandlers(sampleHead){
+      const rowChecks = $$('.row-select');
+      const master = $('#rowSelectAll');
+      if(master){
+        master.addEventListener('change', ()=>{
+          rowChecks.forEach(c=>{c.checked = master.checked;});
+          updateSQL(sampleHead);
+        });
+      }
+      rowChecks.forEach(cb=>cb.addEventListener('change', ()=>{ updateMaster(master, rowChecks); updateSQL(sampleHead); }));
+      $('#copySql').addEventListener('click', ()=>{
+        const pre = $('#sqlPreview');
+        navigator.clipboard.writeText(pre.textContent).then(()=>{
+          const status = $('#sqlStatus');
+          status.textContent = 'Copied!';
+          setTimeout(()=>status.textContent='', 1500);
+        });
+      });
+      $('#sqlTableName').addEventListener('input', ()=>updateSQL(sampleHead));
+  const perRow = $('#perRowMode');
+  if(perRow){ perRow.addEventListener('change', ()=>updateSQL(sampleHead)); }
+    }
+
+    function updateMaster(master, rowChecks){
+      if(!master) return;
+      const all = rowChecks.length && rowChecks.every(c=>c.checked);
+      master.checked = all;
+      const indeterminate = !all && rowChecks.some(c=>c.checked);
+      master.indeterminate = indeterminate;
+    }
+
+    function escapeValue(v){
+      if(v === null || v === undefined) return 'NULL';
+      if(typeof v === 'number' || typeof v === 'boolean') return String(v);
+      if(typeof v === 'object') v = JSON.stringify(v);
+      return "'" + String(v).replace(/'/g, "''") + "'";
+    }
+
+    function updateSQL(sampleHead){
+      const pre = $('#sqlPreview');
+      const btn = $('#copySql');
+      const table = $('#sqlTableName').value || 'my_table';
+      const checks = $$('.row-select');
+      const selectedIdx = checks.filter(c=>c.checked).map(c=>parseInt(c.dataset.row));
+      if(selectedIdx.length===0){
+        pre.classList.add('hidden');
+        btn.disabled = true;
+        pre.textContent='';
+        return;
+      }
+      btn.disabled = false;
+      const perRow = $('#perRowMode')?.checked;
+      let sql;
+      if(perRow){
+        sql = selectedIdx.map(i=>{
+          const rowObj = fullData.sample[i];
+          const vals = sampleHead.map(h=>escapeValue(rowObj[h]));
+          return `INSERT INTO ${table} (${sampleHead.join(', ')}) VALUES (${vals.join(', ')});`;
+        }).join('\n');
+      } else {
+        const rowsSql = selectedIdx.map(i=>{
+          const rowObj = fullData.sample[i];
+          const vals = sampleHead.map(h=>escapeValue(rowObj[h]));
+          return `  (${vals.join(', ')})`;
+        }).join(',\n');
+        sql = `INSERT INTO ${table} (\n  ${sampleHead.join(', ')}\n) VALUES\n${rowsSql};`;
+      }
+      pre.textContent = sql;
+      pre.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
