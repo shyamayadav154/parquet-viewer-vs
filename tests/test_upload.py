@@ -16,12 +16,29 @@ def make_parquet_bytes():
 
 def test_upload_parquet():
     client = TestClient(create_app())
-    data = {"sample_rows": "2", "include_stats": "true"}
+    data = {"include_stats": "true"}
     files = {"file": ("test.parquet", make_parquet_bytes(), "application/octet-stream")}
     r = client.post("/api/upload", data=data, files=files)
     assert r.status_code == 200, r.text
     js = r.json()
     assert js["num_rows"] == 3
     assert js["num_columns"] == 2
-    assert len(js["sample"]) == 2
+    # All rows are now returned
+    assert len(js["sample"]) == 3
     assert any(f["name"] == "a" for f in js["schema"])
+
+
+def test_sql_query():
+    client = TestClient(create_app())
+    # Upload file first to populate CURRENT_DF
+    files = {"file": ("test.parquet", make_parquet_bytes(), "application/octet-stream")}
+    r = client.post("/api/upload", data={"include_stats": "false"}, files=files)
+    assert r.status_code == 200, r.text
+    # Execute SQL
+    q = {"query": "SELECT a, b FROM data WHERE a > 1", "limit": 10}
+    r2 = client.post("/api/sql", json=q)
+    assert r2.status_code == 200, r2.text
+    js = r2.json()
+    assert js["row_count"] == 2
+    assert js["columns"] == ["a", "b"]
+    assert len(js["rows"]) == 2

@@ -13,6 +13,7 @@ Requires-Dist: python-multipart
 Requires-Dist: pandas
 Requires-Dist: pyarrow
 Requires-Dist: orjson
+Requires-Dist: duckdb
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Requires-Dist: httpx; extra == "dev"

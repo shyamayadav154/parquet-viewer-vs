@@ -5,6 +5,7 @@ python-multipart
 pandas
 pyarrow
 orjson
+duckdb
 
 [dev]
 pytest
