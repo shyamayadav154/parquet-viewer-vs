@@ -579,6 +579,13 @@
       return "'" + String(v).replace(/'/g, "''") + "'";
     }
 
+    // Quote SQL identifiers for PostgreSQL compatibility (handles schema-qualified names)
+    function quoteIdent(id){
+      if(!id) return '""';
+      // Allow schema.table or db.schema.table splitting on dots not inside quotes
+      return id.split('.').map(part=> '"' + part.replace(/"/g,'""') + '"').join('.');
+    }
+
     // Generic data viewer component with SQL builder
     function renderDataViewer({containerId, headers, rowObjects, prefix}){
       const container = document.getElementById(containerId);
@@ -619,6 +626,7 @@
             <input id='${prefix}perRowMode' type='checkbox' class='accent-indigo-600' checked> Per-row
           </label>
           <button id='${prefix}copySql' class='hidden text-xs px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium'>Copy SQL</button>
+          <button id='${prefix}downloadSql' class='hidden text-xs px-3 py-1.5 rounded-md bg-slate-600 text-white font-medium'>Download SQL</button>
           <span id='${prefix}sqlStatus' class='text-xs text-slate-500 dark:text-slate-500'></span>
         </div>
         <pre id='${prefix}sqlPreview' class='text-[10px] md:text-xs leading-relaxed bg-slate-50/90 dark:bg-slate-800/70 text-slate-800 dark:text-slate-100 p-3 rounded-lg ring-1 ring-slate-200 dark:ring-slate-700 overflow-auto max-h-64 hidden'></pre>
@@ -673,6 +681,23 @@
       setTimeout(()=>{ setColumnSelectionWarning(); }, 1550);
         });
       });
+  // Download SQL handler
+  container.querySelector(`#${prefix}downloadSql`)?.addEventListener('click', ()=>{
+    const pre = container.querySelector(`#${prefix}sqlPreview`);
+    if(!pre || !pre.textContent) return;
+    const tableName = container.querySelector(`#${prefix}sqlTableName`)?.value || 'my_table';
+    const blob = new Blob([pre.textContent], {type:'text/sql;charset=utf-8'});
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g,'-');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${tableName || 'query'}-${ts}.sql`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    const status = container.querySelector(`#${prefix}sqlStatus`);
+    status.textContent = 'Downloaded!';
+    setTimeout(()=>status.textContent='', 1500);
+  });
       container.querySelector(`#${prefix}sqlTableName`)?.addEventListener('input', ()=>updateDataViewerSQL({headers, rowObjects, prefix}));
       container.querySelector(`#${prefix}perRowMode`)?.addEventListener('change', ()=>updateDataViewerSQL({headers, rowObjects, prefix}));
     }
@@ -680,10 +705,12 @@
     function updateDataViewerSQL({headers, rowObjects, prefix}){
       const pre = document.getElementById(`${prefix}sqlPreview`);
       const btn = document.getElementById(`${prefix}copySql`);
+  const dlBtn = document.getElementById(`${prefix}downloadSql`);
       const topMsg = document.getElementById(`${prefix}noRowsTop`);
-      if(!pre || !btn) return;
+  if(!pre || !btn) return;
       const tableNameInput = document.getElementById(`${prefix}sqlTableName`);
-      const table = tableNameInput?.value || 'my_table';
+  const tableInput = tableNameInput?.value || 'my_table';
+  const table = quoteIdent(tableInput);
       const checks = Array.from(document.querySelectorAll(`#${prefix}sqlBuilder ~ div .row-select`)); // fallback not used; simpler approach below
       const viewer = document.getElementById(`${prefix}sqlBuilder`)?.parentElement; // container
       const rowChecks = viewer ? Array.from(viewer.querySelectorAll('.row-select')) : [];
@@ -692,6 +719,7 @@
         pre.classList.add('hidden');
         pre.textContent='';
         if(btn) btn.classList.add('hidden');
+  if(dlBtn) dlBtn.classList.add('hidden');
         if(topMsg){
           topMsg.textContent='select row to generate sql insert statment';
           topMsg.classList.remove('hidden');
@@ -707,6 +735,7 @@
         return;
       }
       if(btn) btn.classList.remove('hidden');
+  if(dlBtn) dlBtn.classList.remove('hidden');
       if(topMsg){
         topMsg.textContent='move to generated sql';
         topMsg.classList.remove('hidden');
@@ -736,11 +765,12 @@
       if(pw) pw.classList.remove('hidden');
       const perRow = document.getElementById(`${prefix}perRowMode`)?.checked;
       let sql;
+      const quotedCols = headers.map(h=>quoteIdent(h));
       if(perRow){
         sql = selectedIdx.map(i=>{
           const rowObj = rowObjects[i];
           const vals = headers.map(h=>escapeValue(rowObj[h]));
-          return `INSERT INTO ${table} (${headers.join(', ')}) VALUES (${vals.join(', ')});`;
+          return `INSERT INTO ${table} (${quotedCols.join(', ')}) VALUES (${vals.join(', ')});`;
         }).join('\n');
       } else {
         const rowsSql = selectedIdx.map(i=>{
@@ -748,7 +778,7 @@
           const vals = headers.map(h=>escapeValue(rowObj[h]));
           return `  (${vals.join(', ')})`;
         }).join(',\n');
-        sql = `INSERT INTO ${table} (\n  ${headers.join(', ')}\n) VALUES\n${rowsSql};`;
+        sql = `INSERT INTO ${table} (\n  ${quotedCols.join(', ')}\n) VALUES\n${rowsSql};`;
       }
       pre.textContent = sql;
       pre.classList.remove('hidden');
