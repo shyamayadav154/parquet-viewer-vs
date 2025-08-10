@@ -21,6 +21,13 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; }
   .drop-active { border-color: rgb(99 102 241); background: rgba(238,242,255,0.6); }
+  /* SQL autocomplete dropdown styling */
+  #sqlAutocomplete { line-height:1.2; }
+  #sqlAutocomplete button { display:block; width:100%; text-align:left; padding:4px 6px; background:transparent; border:0; cursor:pointer; color:#334155; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  :root.dark #sqlAutocomplete button { color:#cbd5e1; }
+  #sqlAutocomplete button.active, #sqlAutocomplete button:hover { background:#e0e7ff; }
+  :root.dark #sqlAutocomplete button.active, :root.dark #sqlAutocomplete button:hover { background:#312e81; }
+  #sqlAutocomplete .sec-h { padding:4px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; opacity:.65; cursor:default; }
   </style>
 </head>
 <body class="h-full bg-gradient-to-br from-slate-50 to-slate-100 dark:bg-none dark:bg-slate-900 text-slate-800 dark:text-slate-100 selection:bg-indigo-500/60 selection:text-white">
@@ -161,7 +168,10 @@
               <div class="flex items-stretch gap-3">
                 <div class="flex flex-col flex-1 gap-1">
                   <span class="font-semibold text-[11px] tracking-wide uppercase text-slate-500 dark:text-slate-400">SQL</span>
-                  <textarea id="sqlExecQuery" rows="3" class="flex-1 rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2 py-1.5 font-mono text-[11px] leading-snug resize-y text-slate-800 dark:text-slate-200 placeholder:italic placeholder:text-slate-400 dark:placeholder:text-slate-500" placeholder="SELECT * FROM data"></textarea>
+                  <div class="relative">
+                    <textarea id="sqlExecQuery" rows="3" class="flex-1 w-full rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/60 px-2 py-1.5 font-mono text-[11px] leading-snug resize-y text-slate-800 dark:text-slate-200 placeholder:italic placeholder:text-slate-400 dark:placeholder:text-slate-500" placeholder="SELECT * FROM data"></textarea>
+                    <div id="sqlAutocomplete" class="hidden absolute left-0 top-full mt-1 w-64 max-h-60 overflow-auto rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg text-[11px] font-mono z-50"></div>
+                  </div>
                   <span id="sqlExecStatus" class="text-[10px] text-slate-500 dark:text-slate-500 h-4"></span>
                 </div>
                 <div class="flex flex-col gap-2 items-stretch w-[90px] shrink-0">
@@ -230,6 +240,139 @@
     if(sqlArea){
       sqlArea.value = 'SELECT * FROM data';
       // Auto run default after slight delay to ensure upload may not yet exist; only run if data loaded later.
+    }
+    // --- SQL Autocomplete Implementation ---
+    const sqlAuto = document.getElementById('sqlAutocomplete');
+  const SQL_KEYWORDS = ['SELECT','FROM','WHERE','GROUP BY','ORDER BY','LIMIT','AND','OR','AS','COUNT','AVG','SUM','MIN','MAX','DISTINCT','JOIN','LEFT JOIN','RIGHT JOIN','OUTER JOIN','ON','HAVING','OFFSET','LIKE','NOT','IN','BETWEEN','CASE','WHEN','THEN','ELSE','END'];
+    let sqlAutoItems = [];
+    let sqlAutoFiltered = [];
+    let sqlAutoIndex = -1;
+    function updateSqlAutocompleteSource(){
+      const cols = fullData ? fullData.schema.map(s=>s.name) : [];
+      const resultCols = sqlResult ? (sqlResult.columns || []) : [];
+      const tables = ['data'];
+      const set = new Set();
+      SQL_KEYWORDS.forEach(k=>set.add(k));
+      tables.forEach(t=>set.add(t));
+      cols.forEach(c=>set.add(c));
+      resultCols.forEach(c=>set.add(c));
+      sqlAutoItems = Array.from(set);
+    }
+    function currentSqlToken(){
+      if(!sqlArea) return {token:'', start:0, end:0};
+      const text = sqlArea.value;
+      const pos = sqlArea.selectionStart || 0;
+      let start = pos - 1;
+      const isChar = ch => /[A-Za-z0-9_\.]/.test(ch);
+      while(start >= 0 && isChar(text[start])) start--; start++;
+      let end = pos;
+      while(end < text.length && isChar(text[end])) end++;
+      return { token: text.slice(start,pos), start, end };
+    }
+    function hideSqlAutocomplete(){ if(!sqlAuto) return; sqlAuto.classList.add('hidden'); sqlAutoIndex=-1; }
+    function showSqlAutocomplete(){ if(!sqlAuto) return; sqlAuto.classList.remove('hidden'); }
+    function renderSqlAutocomplete(){
+      if(!sqlAuto) return;
+      if(!sqlAutoFiltered.length){ hideSqlAutocomplete(); return; }
+      sqlAuto.innerHTML = sqlAutoFiltered.map((s,i)=>`<button type='button' data-i='${i}' class='${i===sqlAutoIndex?"active":""}' tabindex='-1'>${s}</button>`).join('');
+      showSqlAutocomplete();
+    }
+    function applySqlAutocompleteChoice(idx){
+      if(idx < 0 || idx >= sqlAutoFiltered.length) return;
+      const choice = sqlAutoFiltered[idx];
+      const { start } = currentSqlToken();
+      const before = sqlArea.value.slice(0,start);
+      const after = sqlArea.value.slice(sqlArea.selectionStart);
+      const needsSpace = choice.match(/\s/) ? ' ' : ' ';
+      sqlArea.value = before + choice + needsSpace + after;
+      const newPos = (before + choice + needsSpace).length;
+      sqlArea.focus();
+      sqlArea.setSelectionRange(newPos,newPos);
+      hideSqlAutocomplete();
+    }
+    function filterSqlAutocomplete(){
+      updateSqlAutocompleteSource();
+      const { token } = currentSqlToken();
+      if(!token){ hideSqlAutocomplete(); return; }
+      const upper = token.toUpperCase();
+      sqlAutoFiltered = sqlAutoItems.filter(s=> s.toUpperCase().startsWith(upper) && s.toUpperCase() !== upper).slice(0,30);
+      if(!sqlAutoFiltered.length){ hideSqlAutocomplete(); return; }
+      sqlAutoIndex = 0;
+      renderSqlAutocomplete();
+    }
+    if(sqlArea){
+      sqlArea.addEventListener('input', ()=>{ filterSqlAutocomplete(); });
+      sqlArea.addEventListener('keydown', (e)=>{
+        // Ctrl/Cmd + Space explicit trigger (even if list hidden)
+        if((e.ctrlKey || e.metaKey) && e.code === 'Space'){
+          e.preventDefault();
+          // Determine if cursor is inside SELECT list (after last SELECT and before following FROM)
+          const textBefore = sqlArea.value.slice(0, sqlArea.selectionStart);
+          const lower = textBefore.toLowerCase();
+          const lastSelect = lower.lastIndexOf('select');
+          let inSelectList = false;
+          if(lastSelect !== -1){
+            const afterSelect = lower.slice(lastSelect + 6); // content after 'select'
+            const fromPos = afterSelect.indexOf(' from ');
+            // Cursor is in select list if no FROM yet OR cursor before the FROM keyword
+            if(fromPos === -1){
+              inSelectList = true;
+            } else {
+              // Compute absolute position of that from
+              const absFrom = lastSelect + 6 + fromPos;
+              if(sqlArea.selectionStart <= absFrom) inSelectList = true;
+            }
+          }
+          if(!inSelectList){
+            // Outside select list: ignore ctrl+space per requirement
+            hideSqlAutocomplete();
+            return;
+          }
+          // Inside SELECT list: only show column suggestions (excluding already referenced columns)
+          updateSqlAutocompleteSource();
+          const cols = fullData ? fullData.schema.map(s=>s.name) : [];
+          const resultCols = sqlResult ? (sqlResult.columns || []) : [];
+          const allCols = Array.from(new Set([...cols, ...resultCols]));
+          // Extract already typed columns within SELECT list segment
+          let selectSegment = '';
+          if(lastSelect !== -1){
+            const afterSelectFull = textBefore.slice(lastSelect + 6); // actual case preserved
+            const fromPosReal = afterSelectFull.toLowerCase().indexOf(' from ');
+            selectSegment = fromPosReal === -1 ? afterSelectFull : afterSelectFull.slice(0, fromPosReal);
+          }
+          const usedCols = new Set(
+            selectSegment
+              .split(/[,\n]/)
+              .map(s=>s.trim())
+              .filter(s=>s.length>0)
+              .map(s=>{
+                // Remove aliases: pattern "col AS alias" or "col alias"
+                const m = s.match(/^(\S+)(?:\s+AS\s+|\s+)[A-Za-z_][A-Za-z0-9_]*$/i);
+                return m ? m[1] : s.split(/\s+AS\s+/i)[0];
+              })
+              .map(s=>s.replace(/[`"']/g,''))
+          );
+          const { token } = currentSqlToken();
+          function notUsed(c){ return !usedCols.has(c); }
+          if(token){
+            const upperTok = token.toUpperCase();
+            sqlAutoFiltered = allCols.filter(c=> c.toUpperCase().startsWith(upperTok) && notUsed(c)).slice(0,50);
+          } else {
+            sqlAutoFiltered = allCols.filter(notUsed).slice(0,50);
+          }
+          if(!sqlAutoFiltered.length){ hideSqlAutocomplete(); return; }
+          sqlAutoIndex = 0; renderSqlAutocomplete();
+          return;
+        }
+        if(sqlAuto.classList.contains('hidden')) return; // intercept only when open
+        if(e.key === 'ArrowDown'){ e.preventDefault(); sqlAutoIndex = (sqlAutoIndex + 1) % sqlAutoFiltered.length; renderSqlAutocomplete(); }
+        else if(e.key === 'ArrowUp'){ e.preventDefault(); sqlAutoIndex = (sqlAutoIndex - 1 + sqlAutoFiltered.length) % sqlAutoFiltered.length; renderSqlAutocomplete(); }
+        else if(e.key === 'Enter' || e.key === 'Tab'){ if(sqlAutoIndex >= 0){ e.preventDefault(); applySqlAutocompleteChoice(sqlAutoIndex); } }
+        else if(e.key === 'Escape'){ hideSqlAutocomplete(); }
+      });
+      sqlArea.addEventListener('click', ()=>{ filterSqlAutocomplete(); });
+      document.addEventListener('click', (e)=>{ if(!sqlAuto.contains(e.target) && e.target !== sqlArea){ hideSqlAutocomplete(); }});
+      sqlAuto.addEventListener('mousedown', (e)=>{ const btn = e.target.closest('button[data-i]'); if(!btn) return; e.preventDefault(); applySqlAutocompleteChoice(parseInt(btn.dataset.i,10)); });
     }
     // Press Enter to run, Shift+Enter for newline
     if(sqlArea){
@@ -462,6 +605,7 @@
       updateColCount();
   populateFilterColumns();
   applyColumnSelection();
+  updateSqlAutocompleteSource();
   // Stats are now a top-level tab; no inner tab activation needed.
   showFileInfoSection(data);
   // Hide uploader area now that file info is in the top bar
@@ -922,6 +1066,7 @@
         status.textContent = `${data.row_count} rows (${data.columns.length} cols)`;
         applyColumnSelection();
         renderSqlResultPanel();
+  updateSqlAutocompleteSource();
       } catch(err){
         status.textContent = 'Error';
         alert('SQL error: '+err.message);
